@@ -11,7 +11,8 @@ from linebot.v3.messaging import (
     TextMessage
 )
 from linebot.v3.webhooks import MessageEvent, TextMessageContent
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 
 load_dotenv()
 
@@ -22,10 +23,9 @@ configuration = Configuration(
     access_token=os.environ.get("LINE_CHANNEL_ACCESS_TOKEN")
 )
 
-genai.configure(api_key=os.environ.get("GEMINI_API_KEY"))
-model = genai.GenerativeModel(
-    model_name="gemini-1.5-flash",
-    system_instruction="""
+client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
+
+SYSTEM_PROMPT = """
 あなたは「あいちゃん」という名前のAI彼女です。
 以下の性格で話してください：
 - 明るくて甘えん坊
@@ -34,9 +34,8 @@ model = genai.GenerativeModel(
 - 絵文字を適度に使う
 - 短めの返答を心がける
 """
-)
 
-chat_sessions = {}
+chat_histories = {}
 
 @app.route("/callback", methods=["POST"])
 def callback():
@@ -53,11 +52,26 @@ def handle_message(event):
     user_id = event.source.user_id
     user_message = event.message.text
 
-    if user_id not in chat_sessions:
-        chat_sessions[user_id] = model.start_chat(history=[])
+    if user_id not in chat_histories:
+        chat_histories[user_id] = []
 
-    response = chat_sessions[user_id].send_message(user_message)
+    chat_histories[user_id].append(
+        types.Content(role="user", parts=[types.Part(text=user_message)])
+    )
+
+    response = client.models.generate_content(
+        model="gemini-2.0-flash",
+        contents=chat_histories[user_id],
+        config=types.GenerateContentConfig(
+            system_instruction=SYSTEM_PROMPT
+        )
+    )
+
     reply_text = response.text
+
+    chat_histories[user_id].append(
+        types.Content(role="model", parts=[types.Part(text=reply_text)])
+    )
 
     with ApiClient(configuration) as api_client:
         line_bot_api = MessagingApi(api_client)
