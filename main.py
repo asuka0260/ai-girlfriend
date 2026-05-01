@@ -18,12 +18,18 @@ load_dotenv()
 
 app = Flask(__name__)
 
-handler = WebhookHandler(os.environ.get("LINE_CHANNEL_SECRET"))
-configuration = Configuration(
-    access_token=os.environ.get("LINE_CHANNEL_ACCESS_TOKEN")
-)
+LINE_CHANNEL_SECRET = os.environ.get("LINE_CHANNEL_SECRET")
+LINE_CHANNEL_ACCESS_TOKEN = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
-client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
+print(f"SECRET: {LINE_CHANNEL_SECRET[:5] if LINE_CHANNEL_SECRET else 'NONE'}")
+print(f"TOKEN: {LINE_CHANNEL_ACCESS_TOKEN[:5] if LINE_CHANNEL_ACCESS_TOKEN else 'NONE'}")
+print(f"GEMINI: {GEMINI_API_KEY[:5] if GEMINI_API_KEY else 'NONE'}")
+
+handler = WebhookHandler(LINE_CHANNEL_SECRET)
+configuration = Configuration(access_token=LINE_CHANNEL_ACCESS_TOKEN)
+
+client = genai.Client(api_key=GEMINI_API_KEY)
 
 SYSTEM_PROMPT = """
 あなたは「あいちゃん」という名前のAI彼女です。
@@ -39,11 +45,14 @@ chat_histories = {}
 
 @app.route("/callback", methods=["POST"])
 def callback():
-    signature = request.headers["X-Line-Signature"]
+    signature = request.headers.get("X-Line-Signature", "")
     body = request.get_data(as_text=True)
+    print(f"署名: {signature[:10]}")
+    print(f"ボディ: {body[:100]}")
     try:
         handler.handle(body, signature)
-    except InvalidSignatureError:
+    except InvalidSignatureError as e:
+        print(f"署名エラー: {e}")
         abort(400)
     return "OK"
 
@@ -51,6 +60,7 @@ def callback():
 def handle_message(event):
     user_id = event.source.user_id
     user_message = event.message.text
+    print(f"受信: {user_message}")
 
     if user_id not in chat_histories:
         chat_histories[user_id] = []
@@ -68,6 +78,7 @@ def handle_message(event):
     )
 
     reply_text = response.text
+    print(f"返信: {reply_text}")
 
     chat_histories[user_id].append(
         types.Content(role="model", parts=[types.Part(text=reply_text)])
