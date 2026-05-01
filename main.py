@@ -11,8 +11,8 @@ from linebot.v3.messaging import (
     TextMessage
 )
 from linebot.v3.webhooks import MessageEvent, TextMessageContent
-from google import genai
-from google.genai import types
+import requests
+import json
 
 load_dotenv()
 
@@ -20,39 +20,54 @@ app = Flask(__name__)
 
 LINE_CHANNEL_SECRET = os.environ.get("LINE_CHANNEL_SECRET")
 LINE_CHANNEL_ACCESS_TOKEN = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN")
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-
-print(f"SECRET: {LINE_CHANNEL_SECRET[:5] if LINE_CHANNEL_SECRET else 'NONE'}")
-print(f"TOKEN: {LINE_CHANNEL_ACCESS_TOKEN[:5] if LINE_CHANNEL_ACCESS_TOKEN else 'NONE'}")
-print(f"GEMINI: {GEMINI_API_KEY[:5] if GEMINI_API_KEY else 'NONE'}")
 
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
 configuration = Configuration(access_token=LINE_CHANNEL_ACCESS_TOKEN)
 
-client = genai.Client(api_key=GEMINI_API_KEY)
-
-SYSTEM_PROMPT = """
-あなたは「あいちゃん」という名前のAI彼女です。
+SYSTEM_PROMPT = """あなたは「あいちゃん」という名前のAI彼女です。
 以下の性格で話してください：
 - 明るくて甘えん坊
 - 語尾に「だよ」「だね」「だよね」をよく使う
 - ユーザーのことを「きみ」と呼ぶ
 - 絵文字を適度に使う
-- 短めの返答を心がける
-"""
+- 短めの返答を心がける"""
 
 chat_histories = {}
+
+def chat_with_ollama(user_id, user_message):
+    if user_id not in chat_histories:
+        chat_histories[user_id] = []
+    
+    chat_histories[user_id].append({
+        "role": "user",
+        "content": user_message
+    })
+    
+    response = requests.post(
+        "http://localhost:11434/api/chat",
+        json={
+            "model": "qwen2.5:7b",
+            "messages": [{"role": "system", "content": SYSTEM_PROMPT}] + chat_histories[user_id],
+            "stream": False
+        }
+    )
+    
+    reply = response.json()["message"]["content"]
+    
+    chat_histories[user_id].append({
+        "role": "assistant",
+        "content": reply
+    })
+    
+    return reply
 
 @app.route("/callback", methods=["POST"])
 def callback():
     signature = request.headers.get("X-Line-Signature", "")
     body = request.get_data(as_text=True)
-    print(f"署名: {signature[:10]}")
-    print(f"ボディ: {body[:100]}")
     try:
         handler.handle(body, signature)
-    except InvalidSignatureError as e:
-        print(f"署名エラー: {e}")
+    except InvalidSignatureError:
         abort(400)
     return "OK"
 
@@ -62,27 +77,8 @@ def handle_message(event):
     user_message = event.message.text
     print(f"受信: {user_message}")
 
-    if user_id not in chat_histories:
-        chat_histories[user_id] = []
-
-    chat_histories[user_id].append(
-        types.Content(role="user", parts=[types.Part(text=user_message)])
-    )
-
-    response = client.models.generate_content(
-        model="gemini-2.0-flash-lite",
-        contents=chat_histories[user_id],
-        config=types.GenerateContentConfig(
-            system_instruction=SYSTEM_PROMPT
-        )
-    )
-
-    reply_text = response.text
+    reply_text = chat_with_ollama(user_id, user_message)
     print(f"返信: {reply_text}")
-
-    chat_histories[user_id].append(
-        types.Content(role="model", parts=[types.Part(text=reply_text)])
-    )
 
     with ApiClient(configuration) as api_client:
         line_bot_api = MessagingApi(api_client)
@@ -94,5 +90,4 @@ def handle_message(event):
         )
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+    app.run(host="0.0.0.0", port=5000)
