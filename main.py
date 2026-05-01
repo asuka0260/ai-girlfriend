@@ -70,7 +70,7 @@ def handle_message(event):
     )
 
     response = client.models.generate_content(
-        model="gemini-1.5-flash",
+        model="gemini-2.0-flash-lite",
         contents=chat_histories[user_id],
         config=types.GenerateContentConfig(
             system_instruction=SYSTEM_PROMPT
